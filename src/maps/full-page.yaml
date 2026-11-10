@@ -5,7 +5,7 @@
 type: map
 id: full-page
 config:
-  mapStyle: "https://tiles.openfreemap.org/styles/positron"
+  mapStyle: "/astro-maplibre-template/style.json"
   center: [-73.9654, 40.7829]
   zoom: 12.5
 
