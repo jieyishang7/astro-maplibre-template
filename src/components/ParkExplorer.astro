@@ -1,0 +1,674 @@
+---
+const dataUrl = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/data/nps-parks.geojson`;
+---
+
+<section class="park-explorer" data-park-explorer data-url={dataUrl}>
+  <div class="explorer-heading">
+    <p class="eyebrow">YOUR NEXT ADVENTURE</p>
+    <h2>Explore All NPS Sites</h2>
+    <p>Search, filter, and discover America's protected places.</p>
+  </div>
+
+  <div class="explorer-layout">
+    <aside class="explorer-sidebar">
+      <label>
+        Search
+        <input
+          data-search
+          type="search"
+          placeholder="Park name, landscape, history..."
+        />
+      </label>
+
+      <div class="explorer-filters">
+        <label>
+          Type
+          <select data-type>
+            <option value="">All types</option>
+          </select>
+        </label>
+
+        <label>
+          State / Territory
+          <select data-state>
+            <option value="">All states / territories</option>
+          </select>
+        </label>
+      </div>
+
+      <button class="explorer-reset" data-reset type="button">
+        Reset map & filters
+      </button>
+
+      <p class="explorer-status" data-status role="status">
+        Loading parks…
+      </p>
+
+      <ul class="explorer-results" data-results aria-label="Matching parks"></ul>
+    </aside>
+
+    <div
+      class="explorer-map"
+      data-map
+      role="region"
+      aria-label="Interactive map of National Park Service sites"
+    ></div>
+  </div>
+
+  <p class="explorer-credit">
+    Data: National Park Service (NPS).
+    Map: © MapTiler, © OpenStreetMap contributors.
+  </p>
+</section>
+
+<script>
+import * as maplibregl from "maplibre-gl"; 
+  import type { GeoJSONSource } from "maplibre-gl";
+  import type { Feature, Point, FeatureCollection } from "geojson";
+  import "maplibre-gl/dist/maplibre-gl.css";
+
+  type ParkProperties = {
+    name: string;
+    type: string;
+    state: string;
+    description: string;
+    image?: string | null;
+    url?: string;
+    explorerId: number;
+  };
+
+  type Park = Feature<Point, ParkProperties>;
+
+  async function initExplorer(root: HTMLElement) {
+    if (root.dataset.initialized) return;
+    root.dataset.initialized = "true";
+
+    const search = root.querySelector<HTMLInputElement>("[data-search]")!;
+    const typeSelect = root.querySelector<HTMLSelectElement>("[data-type]")!;
+    const stateSelect = root.querySelector<HTMLSelectElement>("[data-state]")!;
+    const reset = root.querySelector<HTMLButtonElement>("[data-reset]")!;
+    const status = root.querySelector<HTMLElement>("[data-status]")!;
+    const results = root.querySelector<HTMLUListElement>("[data-results]")!;
+    const container = root.querySelector<HTMLElement>("[data-map]")!;
+
+    const controls = [search, typeSelect, stateSelect, reset];
+    controls.forEach((control) => (control.disabled = true));
+
+    let parks: Park[] = [];
+    let map: maplibregl.Map | undefined;
+
+    const popup = new maplibregl.Popup({
+      maxWidth: "320px",
+      closeOnClick: true,
+    });
+
+    function collection(items: Park[]): FeatureCollection<Point, ParkProperties> {
+      return { type: "FeatureCollection", features: items };
+    }
+
+    function safeUrl(value: string | null | undefined) {
+      if (!value) return null;
+      try {
+        const url = new URL(value);
+        return url.protocol === "https:" ? url.href : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function showPark(park: Park) {
+      if (!map) return;
+
+      const properties = park.properties;
+      const coordinates = park.geometry.coordinates as [number, number];
+      const card = document.createElement("div");
+      card.className = "park-popup";
+
+      const imageUrl = safeUrl(properties.image);
+      if (imageUrl) {
+        const image = document.createElement("img");
+        image.src = imageUrl;
+        image.alt = properties.name;
+        image.loading = "lazy";
+        image.addEventListener("error", () => image.remove(), { once: true });
+        card.append(image);
+      }
+
+      const title = document.createElement("h3");
+      title.textContent = properties.name;
+
+      const meta = document.createElement("p");
+      meta.className = "park-popup-meta";
+      meta.textContent =
+        `${properties.type || "NPS Site"} · ${properties.state}`;
+
+      const description = document.createElement("p");
+      description.textContent = properties.description;
+
+      card.append(title, meta, description);
+
+      const website = safeUrl(properties.url);
+      if (website) {
+        const link = document.createElement("a");
+        link.href = website;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Visit official website ↗";
+        card.append(link);
+      }
+
+      map.easeTo({
+        center: coordinates,
+        zoom: Math.max(map.getZoom(), 9),
+        duration: 900,
+        padding: 0,
+      });
+
+      popup.setLngLat(coordinates).setDOMContent(card).addTo(map);
+    }
+
+    function renderResults(items: Park[]) {
+      results.replaceChildren();
+
+      if (!items.length) {
+        const empty = document.createElement("li");
+        empty.className = "explorer-empty";
+        empty.textContent = "No matching sites. Try a different search.";
+        results.append(empty);
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+
+      for (const park of items) {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.parkId = String(park.properties.explorerId);
+
+        const name = document.createElement("strong");
+        name.textContent = park.properties.name;
+
+        const meta = document.createElement("span");
+        meta.textContent =
+          `${park.properties.type || "NPS Site"} · ${park.properties.state}`;
+
+        button.append(name, meta);
+        item.append(button);
+        fragment.append(item);
+      }
+
+      results.append(fragment);
+    }
+
+    function updateFilters() {
+      if (!map) return;
+      const query = search.value.trim().toLowerCase();
+
+      const filtered = parks.filter((park) => {
+        const p = park.properties;
+        const matchesSearch =
+          !query ||
+          `${p.name} ${p.description} ${p.state}`.toLowerCase().includes(query);
+
+        const matchesType =
+          !typeSelect.value || p.type === typeSelect.value;
+
+        const matchesState =
+          !stateSelect.value ||
+          p.state.split(",").map((state) => state.trim())
+            .includes(stateSelect.value);
+
+        return matchesSearch && matchesType && matchesState;
+      });
+
+      popup.remove();
+
+      const source = map.getSource("explorer-parks") as GeoJSONSource;
+      source.setData(collection(filtered));
+
+      status.textContent = `${filtered.length} of ${parks.length} sites`;
+      renderResults(filtered);
+    }
+
+    function fillOptions(select: HTMLSelectElement, values: string[]) {
+      for (const value of [...new Set(values)].filter(Boolean).sort()) {
+        select.add(new Option(value, value));
+      }
+    }
+
+    try {
+      const response = await fetch(root.dataset.url!);
+      if (!response.ok) throw new Error(`Data request: ${response.status}`);
+
+      const data = await response.json() as FeatureCollection<Point, ParkProperties>;
+
+      parks = data.features
+        .filter((park) =>
+          park.geometry?.type === "Point" &&
+          park.geometry.coordinates.length >= 2 &&
+          park.geometry.coordinates.every(Number.isFinite)
+        )
+        .map((park, index) => ({
+          ...park,
+          properties: { ...park.properties, explorerId: index },
+        }))
+        .sort((a, b) => a.properties.name.localeCompare(b.properties.name));
+
+      fillOptions(typeSelect, parks.map((park) => park.properties.type));
+      fillOptions(
+        stateSelect,
+        parks.flatMap((park) =>
+          park.properties.state.split(",").map((state) => state.trim())
+        ),
+      );
+
+      map = new maplibregl.Map({
+        container,
+        style: "https://api.maptiler.com/maps/hybrid/style.json?key=2MFPs4v7EvR8DRJv8fuC",
+        center: [-98.5, 39.8],
+        zoom: 3.2,
+        minZoom: 1,
+        maxZoom: 18,
+        pitch: 0,
+        bearing: 0,
+      });
+
+      const explorerMap = map;
+
+      explorerMap.scrollZoom.disable();
+      explorerMap.on("click", () => explorerMap.scrollZoom.enable());
+      container.addEventListener("mouseleave", () =>
+        explorerMap.scrollZoom.disable()
+      );
+
+      explorerMap.addControl(
+        new maplibregl.NavigationControl({ showCompass: false }),
+        "top-right",
+      );
+      explorerMap.addControl(
+        new maplibregl.FullscreenControl(),
+        "top-right",
+      );
+
+      explorerMap.on("error", (event) => {
+        console.error("Park explorer:", event.error);
+        status.textContent = "Map data could not load. Check your connection or MapTiler key.";
+      });
+
+      explorerMap.on("load", () => {
+        explorerMap.addSource("explorer-parks", {
+          type: "geojson",
+          data: collection(parks),
+          cluster: true,
+          clusterRadius: 45,
+          clusterMaxZoom: 11,
+        });
+
+        explorerMap.addLayer({
+          id: "explorer-clusters",
+          type: "circle",
+          source: "explorer-parks",
+          filter: ["has", "point_count"],
+          paint: {
+            "circle-color": "#8fc9a3",
+            "circle-radius": [
+              "step", ["get", "point_count"],
+              19, 10, 25, 50, 32,
+            ],
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#ffffff",
+          },
+        });
+
+        explorerMap.addLayer({
+          id: "explorer-cluster-count",
+          type: "symbol",
+          source: "explorer-parks",
+          filter: ["has", "point_count"],
+          layout: {
+            "text-field": "{point_count_abbreviated}",
+            "text-size": 13,
+          },
+          paint: { "text-color": "#10251b" },
+        });
+
+        explorerMap.addLayer({
+          id: "explorer-sites",
+          type: "circle",
+          source: "explorer-parks",
+          filter: ["!", ["has", "point_count"]],
+          paint: {
+            "circle-radius": 7,
+            "circle-color": "#e8a54b",
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#ffffff",
+          },
+        });
+
+        explorerMap.on("click", "explorer-clusters", async (event) => {
+          const feature = event.features?.[0];
+          if (!feature || feature.geometry.type !== "Point") return;
+
+          try {
+            const source = explorerMap.getSource("explorer-parks") as GeoJSONSource;
+            const zoom = await source.getClusterExpansionZoom(
+              Number(feature.properties.cluster_id),
+            );
+
+            explorerMap.easeTo({
+              center: feature.geometry.coordinates as [number, number],
+              zoom,
+            });
+          } catch (error) {
+            console.error("Could not expand cluster:", error);
+          }
+        });
+
+        explorerMap.on("click", "explorer-sites", (event) => {
+          const id = Number(event.features?.[0]?.properties.explorerId);
+          const park = parks.find((p) => p.properties.explorerId === id);
+          if (park) showPark(park);
+        });
+
+        for (const layer of ["explorer-clusters", "explorer-sites"]) {
+          explorerMap.on("mouseenter", layer, () => {
+            explorerMap.getCanvas().style.cursor = "pointer";
+          });
+          explorerMap.on("mouseleave", layer, () => {
+            explorerMap.getCanvas().style.cursor = "";
+          });
+        }
+
+        search.addEventListener("input", updateFilters);
+        typeSelect.addEventListener("change", updateFilters);
+        stateSelect.addEventListener("change", updateFilters);
+
+        results.addEventListener("click", (event) => {
+          const button = (event.target as HTMLElement)
+            .closest<HTMLButtonElement>("button[data-park-id]");
+          if (!button) return;
+
+          const id = Number(button.dataset.parkId);
+          const park = parks.find((p) => p.properties.explorerId === id);
+          if (park) showPark(park);
+        });
+
+        reset.addEventListener("click", () => {
+          search.value = "";
+          typeSelect.value = "";
+          stateSelect.value = "";
+          updateFilters();
+
+          explorerMap.easeTo({
+            center: [-98.5, 39.8],
+            zoom: 3.2,
+            pitch: 0,
+            bearing: 0,
+            padding: 0,
+            duration: 1000,
+          });
+        });
+
+        controls.forEach((control) => (control.disabled = false));
+        updateFilters();
+      });
+
+      const observer = new ResizeObserver(() => explorerMap.resize());
+      observer.observe(container);
+
+      document.addEventListener("astro:before-swap", () => {
+        observer.disconnect();
+        popup.remove();
+        explorerMap.remove();
+      }, { once: true });
+    } catch (error) {
+      console.error(error);
+      status.textContent = "Unable to load parks. Please refresh and try again.";
+      map?.remove();
+    }
+  }
+
+  function initExplorers() {
+    document.querySelectorAll<HTMLElement>("[data-park-explorer]")
+      .forEach((root) => void initExplorer(root));
+  }
+
+  initExplorers();
+  document.addEventListener("astro:page-load", initExplorers);
+</script>
+
+<style>
+  .park-explorer {
+    background: #111c27;
+    color: #f9fafb;
+    padding: 48px 24px 20px;
+  }
+
+  .explorer-heading {
+    max-width: 1440px;
+    margin: 0 auto 24px;
+  }
+
+  .eyebrow {
+    margin: 0 0 8px;
+    color: #8fc9a3;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+  }
+
+  .explorer-heading h2 {
+    margin: 0 0 10px;
+    font-size: clamp(26px, 3vw, 38px);
+    color: #f9fafb;
+  }
+
+  .explorer-heading > p:last-child {
+    margin: 0;
+    color: #b8c6d3;
+  }
+
+  .explorer-layout {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    max-width: 1440px;
+    height: 78vh;
+    min-height: 560px;
+    margin: 0 auto;
+    overflow: hidden;
+    border: 1px solid #344352;
+    border-radius: 16px;
+  }
+
+  .explorer-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+    min-height: 0;
+    min-width: 0;
+    background: #1b2836;
+  }
+
+  .explorer-sidebar label {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 13px;
+    color: #cfdae3;
+  }
+
+  .explorer-sidebar input,
+  .explorer-sidebar select {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid #526474;
+    border-radius: 8px;
+    background: #111c27;
+    color: #fff;
+    font: inherit;
+    font-size: 14px;
+  }
+
+  .explorer-sidebar input:focus-visible,
+  .explorer-sidebar select:focus-visible,
+  .explorer-reset:focus-visible {
+    outline: 2px solid #8fc9a3;
+    outline-offset: 3px;
+  }
+
+  .explorer-filters {
+    display: grid;
+    gap: 12px;
+  }
+
+  .explorer-reset {
+    padding: 10px 12px;
+    border: 1px solid #8fc9a3;
+    border-radius: 8px;
+    background: transparent;
+    color: #b9e3c7;
+    cursor: pointer;
+    font: inherit;
+    font-size: 14px;
+  }
+
+  .explorer-reset:hover {
+    background: #2b4439;
+  }
+
+  .explorer-status {
+    margin: 0;
+    font-size: 13px;
+    color: #b8c6d3;
+  }
+
+  .explorer-results {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .explorer-results :global(button) {
+    display: block;
+    width: 100%;
+    padding: 13px 10px;
+    border: 0;
+    border-bottom: 1px solid #344352;
+    background: transparent;
+    text-align: left;
+    color: #f9fafb;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .explorer-results :global(button:hover),
+  .explorer-results :global(button:focus-visible) {
+    background: #2b3d4e;
+  }
+
+  .explorer-results :global(strong) {
+    display: block;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .explorer-results :global(span) {
+    display: block;
+    margin-top: 5px;
+    color: #b8c6d3;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .explorer-results :global(.explorer-empty) {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #b8c6d3;
+  }
+
+  .explorer-map {
+    min-width: 0;
+    height: 100%;
+  }
+
+  .explorer-credit {
+    margin: 16px 0 0;
+    text-align: center;
+    color: #b8c6d3;
+    font-size: 12px;
+  }
+
+  .explorer-map :global(.maplibregl-popup-content) {
+    padding: 18px;
+    border-radius: 12px;
+    color: #243342;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+
+  .explorer-map :global(.park-popup img) {
+    display: block;
+    width: 100%;
+    height: 150px;
+    margin-bottom: 12px;
+    border-radius: 8px;
+    object-fit: cover;
+  }
+
+  .explorer-map :global(.park-popup h3) {
+    margin: 0 0 8px;
+    font-size: 18px;
+    line-height: 1.35;
+    color: #162533;
+  }
+
+  .explorer-map :global(.park-popup p) {
+    margin: 10px 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .explorer-map :global(.park-popup .park-popup-meta) {
+    color: #647382;
+    font-size: 12px;
+  }
+
+  .explorer-map :global(.park-popup a) {
+    color: #216b45;
+    font-weight: 600;
+  }
+
+  @media (max-width: 768px) {
+    .park-explorer {
+      padding: 32px 12px 16px;
+    }
+
+    .explorer-layout {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 60vh;
+      height: auto;
+      min-height: 0;
+    }
+
+    .explorer-sidebar {
+      gap: 12px;
+      padding: 16px;
+    }
+
+    .explorer-filters {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .explorer-results {
+      flex: none;
+      max-height: 150px;
+    }
+  }
+</style>

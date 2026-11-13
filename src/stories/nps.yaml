@@ -1,0 +1,294 @@
+# yaml-language-server: $schema=https://docs.maplibre-yaml.org/schema/latest/scrollytelling.schema.json
+#
+# The story on src/pages/scrollytelling.mdx. The map stays on screen while the
+# chapters scroll over it; each chapter moves the camera and can show or hide
+# layers. Chapter text (`description`) is HTML, not Markdown.
+type: scrollytelling
+id: nps-story
+theme: dark
+showMarkers: true
+markerColor: "#8FC9A3"
+
+config:
+  mapStyle: "https://api.maptiler.com/maps/hybrid/style.json?key=2MFPs4v7EvR8DRJv8fuC"
+  center: [-98.5, 39.8]
+  zoom: 3.2
+  interactive: false
+  maxPitch: 85
+
+sources:
+  # Hybrid has vector labels but no 3D buildings; register an owned source.
+  nyc-buildings:
+    type: vector
+    url: "https://api.maptiler.com/tiles/v3/tiles.json?key=2MFPs4v7EvR8DRJv8fuC"
+  elevation:
+    type: raster-dem
+    url: "https://tiles.mapterhorn.com/tilejson.json"
+    encoding: terrarium
+
+terrain:
+  source: elevation
+  exaggeration: 1.0
+
+images:
+  mountain-marker: "/astro-maplibre-template/img/mountain-marker.svg"
+
+layers:
+  # MapTiler Planet v3: building polygons and heights in metres.
+  - id: nyc-buildings-3d
+    type: fill-extrusion
+    source: nyc-buildings
+    source-layer: building
+    minzoom: 13
+    filter: ["all", ["!=", ["get", "hide_3d"], true], [">", ["get", "render_height"], 0]]
+    layout:
+      visibility: none
+    paint:
+      fill-extrusion-color: "#d8d3c8"
+      fill-extrusion-height: ["get", "render_height"]
+      fill-extrusion-base: ["coalesce", ["get", "render_min_height"], 0]
+      fill-extrusion-opacity: 0.9
+      fill-extrusion-vertical-gradient: true
+
+  - id: nps-parks
+    type: circle
+    label: NPS Sites
+    source:
+      type: geojson
+      url: "/data/nps-parks.geojson"
+    paint:
+      circle-radius: 5
+      circle-color: "#5C9E73"
+      circle-stroke-color: "#FFFFFF"
+      circle-stroke-width: 1
+      circle-opacity: 0.85
+
+  - id: national-parks
+    type: circle
+    label: National Parks
+    source:
+      type: geojson
+      url: "/data/nps-parks.geojson"
+    filter: ["==", ["get", "type"], "National Park"]
+    layout:
+      visibility: none
+    paint:
+      circle-radius: 7
+      circle-color: "#E8A54B"
+      circle-stroke-color: "#FFFFFF"
+      circle-stroke-width: 1.5
+      circle-opacity: 0.95
+
+
+  - id: featured-parks
+    type: symbol
+    label: Featured Parks
+    source:
+      type: geojson
+      data:
+        type: FeatureCollection
+        features:
+          - type: Feature
+            properties:
+              name: Yosemite
+            geometry:
+              type: Point
+              coordinates: [-119.58, 37.73]
+          - type: Feature
+            properties:
+              name: Yellowstone
+            geometry:
+              type: Point
+              coordinates: [-110.8382, 44.5290]
+          - type: Feature
+            properties:
+              name: Grand Canyon
+            geometry:
+              type: Point
+              coordinates: [-112.1438, 36.0570]
+          - type: Feature
+            properties:
+              name: Acadia
+            geometry:
+              type: Point
+              coordinates: [-68.224610, 44.352643]
+          - type: Feature
+            properties:
+              name: Great Smoky Mountains
+            geometry:
+              type: Point
+              coordinates: [-83.4986, 35.5628]
+
+    layout:
+      visibility: none
+      icon-image: mountain-marker
+      icon-size: 0.65
+      icon-allow-overlap: true
+
+  - id: central-park
+    type: fill
+    source:
+      type: geojson
+      data:
+        type: Feature
+        properties: { name: Central Park }
+        geometry:
+          type: Polygon
+          coordinates:
+            - - [-73.9730, 40.7644]
+              - [-73.9819, 40.7681]
+              - [-73.9580, 40.8006]
+              - [-73.9496, 40.7968]
+              - [-73.9730, 40.7644]
+    layout:
+      visibility: none
+    paint:
+      fill-color: "#4caf50"
+      fill-opacity: 0.35
+
+chapters:
+  - id: intro
+    title: Beyond National Parks
+    description: >-
+      <p>Explore America's protected landscapes,
+      historic sites, and national monuments through
+      an interactive geographic journey.</p>
+    center: [-98.5, 39.8]
+    zoom: 3.2
+    padding: 0
+    alignment: center
+    layers:
+      hide: [nyc-buildings-3d]
+
+  - id: national-parks-chapter
+    title: 64 National Parks Across the United States
+    description: >-
+      <p>The United States is home to 64 officially designated
+      National Parks, protecting extraordinary landscapes,
+      ecosystems, and geological features.</p>
+      <p>Explore their geographic distribution,
+      highlighted in gold across the map.</p>
+    center: [-98.5, 39.8]
+    zoom: 3.2
+    alignment: left
+    layers:
+      show: [national-parks]
+      hide: [nps-parks, nyc-buildings-3d]
+
+  - id: yosemite 
+    title: Yosemite National Park
+    description: >-
+      <img src="/astro-maplibre-template/img/yosemite.webp"
+           alt="Mountain landscape in Yosemite National Park"
+           style="width:100%; height:190px; object-fit:cover; border-radius:10px; margin-bottom:14px;" />
+      <p>Explore the granite peaks, deep valleys, and
+      dramatic topography of California's Sierra Nevada
+      through an interactive 3D landscape.</p>
+    center: [-119.58, 37.73]
+    zoom: 10
+    pitch: 55
+    bearing: 45
+    alignment: left
+    layers:
+      show: [featured-parks]
+      hide: [nps-parks, national-parks, central-park, nyc-buildings-3d]
+
+  - id: yellowstone
+    title: Yellowstone National Park
+    description: >-
+      <img src="/astro-maplibre-template/img/yellowstone.webp"
+           alt="Yellowstone National Park landscape"
+           style="width:100%; height:190px; object-fit:cover; border-radius:10px; margin-bottom:14px;" />
+      <p>Established in 1872, Yellowstone is known for
+      its geothermal features, geysers, hot springs,
+      and volcanic landscape.</p>
+      <p>Explore the terrain of America's first national park.</p>
+    center: [-110.8355, 44.5265]
+    zoom: 15
+    pitch: 35
+    bearing: 0
+    alignment: left
+    layers:
+      show: [featured-parks]
+      hide: [nps-parks, national-parks, central-park, nyc-buildings-3d]
+
+  - id: grand-canyon
+    title: Grand Canyon National Park
+    description: >-
+      <img src="/astro-maplibre-template/img/grandcanyon.jpeg"
+           alt="Grand Canyon National Park"
+           style="width:100%; height:190px; object-fit:cover; border-radius:10px; margin-bottom:14px;" />
+      <p>Carved by the Colorado River, the Grand Canyon
+      reveals layers of geological history through its
+      dramatic cliffs and immense depth.</p>
+    center: [-112.1438, 36.0570]
+    zoom: 11
+    pitch: 60
+    bearing: 25
+    alignment: left
+    layers:
+      show: [featured-parks]
+      hide: [nps-parks, national-parks, central-park, nyc-buildings-3d]
+
+  - id: acadia
+    title: Acadia National Park
+    description: >-
+      <img src="/astro-maplibre-template/img/acadia.webp"
+           alt="Acadia National Park rocky coastline in Maine"
+           style="width:100%; height:190px; object-fit:cover; border-radius:10px; margin-bottom:14px;" />
+      <p>On the Atlantic coast, Acadia brings together
+      granite mountains, forests, islands, and rocky shores.</p>
+    center: [-68.2246, 44.3526]
+    zoom: 11
+    pitch: 55
+    bearing: 35
+    alignment: left
+    layers:
+      show: [featured-parks]
+      hide: [nps-parks, national-parks, central-park, nyc-buildings-3d]
+
+  - id: great-smoky-mountains
+    title: Great Smoky Mountains National Park
+    description: >-
+      <img src="/astro-maplibre-template/img/greatsmoky.jpeg"
+           alt="Layered mountain ridges in Great Smoky Mountains National Park"
+           style="width:100%; height:190px; object-fit:cover; border-radius:10px; margin-bottom:14px;" />
+      <p>Straddling Tennessee and North Carolina,
+      this park protects a landscape of ancient
+      Appalachian mountains, forests, and valleys.</p>
+    center: [-83.4986, 35.5628]
+    zoom: 11
+    pitch: 60
+    bearing: 25
+    alignment: left
+    layers:
+      show: [featured-parks]
+      hide: [nps-parks, national-parks, central-park, nyc-buildings-3d]
+
+  - id: statue-of-liberty
+    title: Beyond Wilderness — The Statue of Liberty
+    description: >-
+      <img src="/astro-maplibre-template/img/liberty.jpeg"
+           alt="Statue of Liberty in New York Harbor"
+           style="width:100%; height:190px; object-fit:cover; border-radius:10px; margin-bottom:14px;" />
+      <p><strong>Statue of Liberty National Monument</strong></p>
+      <p>The National Park Service protects more than
+      mountains, forests, and canyons. It also preserves
+      places of history, culture, and national memory.</p>
+      <p>Standing on Liberty Island in New York Harbor,
+      the Statue of Liberty represents freedom and
+      has become a symbol of hope for generations.</p>
+      <p>From natural landscapes to cultural landmarks,
+      preservation takes many forms.</p>
+    center: [-74.025, 40.704]
+    zoom: 14
+    pitch: 60
+    bearing: 180
+    alignment: left
+    layers:
+      show: [nyc-buildings-3d]
+      hide: [featured-parks, national-parks, nps-parks, central-park]
+
+footer: >-
+  <p>Data: National Park Service (NPS). Basemap:
+  © MapTiler, © OpenStreetMap contributors.</p>
